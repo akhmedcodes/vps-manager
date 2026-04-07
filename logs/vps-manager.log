@@ -1,3 +1,26 @@
 2026-04-07 17:16:04 [INFO] Project 'aiogram-bot' added.
 2026-04-07 17:16:24 [INFO] start aiogram-bot: Started vps-aiogram-bot.service
 2026-04-07 17:16:34 [INFO] stop aiogram-bot: Stopped vps-aiogram-bot.service
+2026-04-07 22:28:56 [INFO] bot configured
+2026-04-07 22:29:21 [INFO] bot configured
+2026-04-07 22:29:25 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:31:36 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:34:24 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:37:33 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:37:49 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:38:26 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:40:48 [ERROR] bot start: Failed to start vps-vps-admin-bot.service: Unit vps-vps-admin-bot.service not found.
+2026-04-07 22:49:40 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:50:54 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-07 22:52:48 [INFO] Bot starting
+2026-04-07 22:54:38 [INFO] Bot starting
+2026-04-07 22:55:48 [INFO] Bot starting
+2026-04-07 22:58:03 [INFO] Bot starting
+2026-04-07 23:01:24 [INFO] Bot starting
+2026-04-07 23:03:03 [INFO] Bot starting
+2026-04-07 23:03:25 [INFO] Bot starting
+2026-04-07 23:27:58 [INFO] Project 'aiogram' added.
+2026-04-07 23:28:53 [INFO] edited aiogram
+2026-04-07 23:29:10 [INFO] removed aiogram
+2026-04-07 23:30:04 [INFO] Project 'aiogram' added.
+2026-04-07 23:31:26 [INFO] restart aiogram: restart vps-aiogram.service done
