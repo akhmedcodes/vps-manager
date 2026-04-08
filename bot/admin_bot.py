@@ -18,6 +18,9 @@ Features:
   /system     CPU / mem / disk
   /logs       per-service logs
   Auto-alert  polls every 60s, alerts on crash
+
+Error handling:
+  Any handler error sends a .txt file with full traceback to admins.
 """
 
 import asyncio
@@ -26,6 +29,8 @@ import os
 import sys
 import tempfile
 import time
+import traceback
+import io
 
 # ── resolve project root regardless of where the script lives ─────────────────
 BOT_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -73,6 +78,85 @@ dp  = Dispatcher(bot)
 _alerted: dict = {}   # project_name → last_alert_timestamp
 
 
+# ─── Error reporting helpers ──────────────────────────────────────────────────
+
+async def _send_error_file(context: str, exc: Exception, chat_id: int = None):
+    """
+    Build a detailed error report and send it as a .txt file to all admins
+    (or a specific chat_id). Never raises.
+    """
+    tb_str  = traceback.format_exc()
+    report  = (
+        f"VPS Manager Bot — Error Report\n"
+        f"{'=' * 60}\n"
+        f"Time     : {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Context  : {context}\n"
+        f"Exception: {type(exc).__name__}: {exc}\n"
+        f"{'=' * 60}\n\n"
+        f"{tb_str}\n"
+    )
+    log_mod.log(f"bot error [{context}]: {exc}", "error")
+
+    targets = [chat_id] if chat_id else list(ADMIN_IDS)
+    for aid in targets:
+        try:
+            buf = io.BytesIO(report.encode("utf-8"))
+            ts  = time.strftime("%Y%m%d_%H%M%S")
+            buf.name = f"error_{ts}.txt"
+            await bot.send_document(
+                aid,
+                InputFile(buf, filename=buf.name),
+                caption=(f"❌ <b>Bot Error</b>  <code>{context}</code>\n"
+                         f"<code>{type(exc).__name__}: {str(exc)[:200]}</code>"),
+            )
+        except Exception as send_err:
+            logger.error(f"Failed to send error report to {aid}: {send_err}")
+
+
+def safe_handler(context_label: str):
+    """
+    Decorator for message handlers.
+    On any unhandled exception, sends a .txt error report to admins.
+    """
+    def decorator(handler):
+        async def wrapper(message: types.Message, *args, **kwargs):
+            try:
+                return await handler(message, *args, **kwargs)
+            except Exception as exc:
+                await _send_error_file(
+                    f"{context_label} (user={message.from_user.id})",
+                    exc,
+                    chat_id=message.chat.id,
+                )
+        wrapper.__name__ = handler.__name__
+        return wrapper
+    return decorator
+
+
+def safe_callback(context_label: str):
+    """
+    Decorator for callback query handlers.
+    On any unhandled exception, sends a .txt error report to admins.
+    """
+    def decorator(handler):
+        async def wrapper(call: types.CallbackQuery, *args, **kwargs):
+            try:
+                return await handler(call, *args, **kwargs)
+            except Exception as exc:
+                await _send_error_file(
+                    f"{context_label} [cb={call.data}] (user={call.from_user.id})",
+                    exc,
+                    chat_id=call.message.chat.id,
+                )
+                try:
+                    await call.answer("An error occurred. Details sent to admins.", show_alert=True)
+                except Exception:
+                    pass
+        wrapper.__name__ = handler.__name__
+        return wrapper
+    return decorator
+
+
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
 def admin_only(handler):
@@ -80,7 +164,6 @@ def admin_only(handler):
         if message.from_user.id not in ADMIN_IDS:
             await message.reply("Access denied.")
             return
-
         return await handler(message, *args, **kwargs)
     wrapper.__name__ = handler.__name__
     return wrapper
@@ -167,6 +250,7 @@ def _actions_kb(name: str) -> InlineKeyboardMarkup:
 
 @dp.message_handler(commands=["start"])
 @admin_only
+@safe_handler("/start")
 async def cmd_start(msg: types.Message, **kwargs):
     projects = _projects()
     n_ok = sum(
@@ -185,6 +269,7 @@ async def cmd_start(msg: types.Message, **kwargs):
 
 @dp.message_handler(commands=["help"])
 @admin_only
+@safe_handler("/help")
 async def cmd_help(msg: types.Message, **kwargs):
     await msg.reply(
         "<b>Commands</b>\n"
@@ -204,6 +289,7 @@ async def cmd_help(msg: types.Message, **kwargs):
 @dp.message_handler(commands=["status"])
 @dp.message_handler(Text(equals="📋 Projects"))
 @admin_only
+@safe_handler("/status")
 async def cmd_status(msg: types.Message, **kwargs):
     projects = _projects()
     if not projects:
@@ -218,6 +304,7 @@ async def cmd_status(msg: types.Message, **kwargs):
 @dp.message_handler(commands=["system"])
 @dp.message_handler(Text(equals="ℹ️ System"))
 @admin_only
+@safe_handler("/system")
 async def cmd_system(msg: types.Message, **kwargs):
     cpu  = mon_mod.cpu_percent()
     mem  = mon_mod.memory_info()
@@ -239,6 +326,7 @@ async def cmd_system(msg: types.Message, **kwargs):
 @dp.message_handler(commands=["monitor"])
 @dp.message_handler(Text(equals="📊 Monitor"))
 @admin_only
+@safe_handler("/monitor")
 async def cmd_monitor(msg: types.Message, **kwargs):
     wait = await msg.reply("⏳ Generating dashboard…")
     names    = [p["name"] for p in _projects()]
@@ -281,18 +369,21 @@ async def cmd_monitor(msg: types.Message, **kwargs):
 
 @dp.message_handler(commands=["projects"])
 @admin_only
+@safe_handler("/projects")
 async def cmd_projects(msg: types.Message, **kwargs):
     await msg.reply("Select a project:", reply_markup=_projects_kb())
 
 
 @dp.callback_query_handler(lambda c: c.data == "proj_list")
 @admin_only_cb
+@safe_callback("proj_list")
 async def cb_proj_list(call: types.CallbackQuery):
     await call.message.edit_text("Select a project:", reply_markup=_projects_kb())
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("proj:"))
 @admin_only_cb
+@safe_callback("proj_detail")
 async def cb_proj_detail(call: types.CallbackQuery):
     name    = call.data.split(":", 1)[1]
     config  = _cfg()
@@ -349,16 +440,21 @@ async def _do_svc(call: types.CallbackQuery, action: str, name: str):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("svc_start:"))
 @admin_only_cb
+@safe_callback("svc_start")
 async def cb_start(call: types.CallbackQuery):
     await _do_svc(call, "svc_start", call.data.split(":", 1)[1])
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith("svc_stop:"))
 @admin_only_cb
+@safe_callback("svc_stop")
 async def cb_stop(call: types.CallbackQuery):
     await _do_svc(call, "svc_stop", call.data.split(":", 1)[1])
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith("svc_restart:"))
 @admin_only_cb
+@safe_callback("svc_restart")
 async def cb_restart(call: types.CallbackQuery):
     await _do_svc(call, "svc_restart", call.data.split(":", 1)[1])
 
@@ -367,6 +463,7 @@ async def cb_restart(call: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("svc_logs:"))
 @admin_only_cb
+@safe_callback("svc_logs")
 async def cb_logs(call: types.CallbackQuery):
     name = call.data.split(":", 1)[1]
     await call.answer()
@@ -389,6 +486,7 @@ async def cb_logs(call: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("svc_metrics:"))
 @admin_only_cb
+@safe_callback("svc_metrics")
 async def cb_metrics(call: types.CallbackQuery):
     name = call.data.split(":", 1)[1]
     await call.answer("Generating…")
@@ -428,6 +526,7 @@ async def cb_metrics(call: types.CallbackQuery):
 @dp.message_handler(commands=["logs"])
 @dp.message_handler(Text(equals="📜 Logs"))
 @admin_only
+@safe_handler("/logs")
 async def cmd_logs(msg: types.Message, **kwargs):
     arg = msg.get_args().strip()
     if not arg:
@@ -438,6 +537,7 @@ async def cmd_logs(msg: types.Message, **kwargs):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("logs_svc:"))
 @admin_only_cb
+@safe_callback("logs_svc")
 async def cb_logs_select(call: types.CallbackQuery):
     name = call.data.split(":", 1)[1]
     await call.answer()
@@ -462,11 +562,38 @@ async def _send_logs(msg: types.Message, name: str):
     await msg.reply(f"<b>Logs: {name}</b>\n\n<pre>{text}</pre>")
 
 
+# ─── Full logs as file ────────────────────────────────────────────────────────
+
+@dp.callback_query_handler(lambda c: c.data.startswith("logs_file:"))
+@admin_only_cb
+@safe_callback("logs_file")
+async def cb_logs_file(call: types.CallbackQuery):
+    """Send full logs as a downloadable .txt file."""
+    name = call.data.split(":", 1)[1]
+    await call.answer("Preparing log file…")
+    if not svc_mod.unit_file_exists(name):
+        await call.message.reply(f"No unit file for <b>{name}</b>.")
+        return
+    st  = svc_mod.get_service_status(name)
+    raw = st["logs"] or "(no logs)"
+
+    buf      = io.BytesIO(raw.encode("utf-8"))
+    ts       = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"logs_{name}_{ts}.txt"
+    buf.name = filename
+
+    await call.message.reply_document(
+        InputFile(buf, filename=filename),
+        caption=f"📜 Full logs for <b>{name}</b>",
+    )
+
+
 # ─── /ssl ─────────────────────────────────────────────────────────────────────
 
 @dp.message_handler(commands=["ssl"])
 @dp.message_handler(Text(equals="🔒 SSL"))
 @admin_only
+@safe_handler("/ssl")
 async def cmd_ssl(msg: types.Message, **kwargs):
     certs = ssl_mod.list_certificates()
     if not certs:
@@ -496,6 +623,7 @@ async def cmd_ssl(msg: types.Message, **kwargs):
 @dp.message_handler(commands=["renew"])
 @dp.message_handler(Text(equals="🔄 Renew SSL"))
 @admin_only
+@safe_handler("/renew")
 async def cmd_renew(msg: types.Message, **kwargs):
     wait = await msg.reply("⏳ Running certbot renew…")
     ok, output = ssl_mod.renew_certificates(dry_run=False)
@@ -527,14 +655,20 @@ async def _alert_poller():
                         continue
                     _alerted[name] = now
                     last = st["logs"].splitlines()[-1] if st["logs"] else "(no logs)"
+
+                    # Send alert + full log as .txt
                     text = (
                         f"🔴 <b>ALERT: {name} crashed</b>\n\n"
                         f"State: <code>failed</code>\n"
                         f"Last log:\n<pre>{last[:500]}</pre>"
                     )
-                    kb = InlineKeyboardMarkup().add(
+                    kb = InlineKeyboardMarkup()
+                    kb.add(
                         InlineKeyboardButton("🔄 Restart", callback_data=f"svc_restart:{name}"),
                         InlineKeyboardButton("📜 Logs",    callback_data=f"svc_logs:{name}"),
+                    )
+                    kb.add(
+                        InlineKeyboardButton("📥 Full log file", callback_data=f"logs_file:{name}"),
                     )
                     for aid in ADMIN_IDS:
                         try:
@@ -549,6 +683,30 @@ async def _alert_poller():
         except Exception as e:
             logger.error(f"Alert poller error: {e}")
         await asyncio.sleep(60)
+
+
+# ─── Global error handler ─────────────────────────────────────────────────────
+
+@dp.errors_handler()
+async def global_error_handler(update: types.Update, exception: Exception):
+    """
+    Catch-all for any exception not caught by individual handlers.
+    Sends a .txt error report to all admins.
+    """
+    context = "unknown"
+    chat_id = None
+    try:
+        if update.message:
+            context = f"message from {update.message.from_user.id}: {update.message.text[:60]}"
+            chat_id = update.message.chat.id
+        elif update.callback_query:
+            context = f"callback {update.callback_query.data} from {update.callback_query.from_user.id}"
+            chat_id = update.callback_query.message.chat.id
+    except Exception:
+        pass
+
+    await _send_error_file(context, exception, chat_id=chat_id)
+    return True   # suppress re-raise
 
 
 # ─── Startup / shutdown ───────────────────────────────────────────────────────

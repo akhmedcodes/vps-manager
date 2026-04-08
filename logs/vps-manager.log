@@ -24,3 +24,7 @@
 2026-04-07 23:29:10 [INFO] removed aiogram
 2026-04-07 23:30:04 [INFO] Project 'aiogram' added.
 2026-04-07 23:31:26 [INFO] restart aiogram: restart vps-aiogram.service done
+2026-04-08 21:15:49 [INFO] bot configured
+2026-04-08 21:15:52 [INFO] Bot starting
+2026-04-08 21:15:55 [INFO] bot start: Started vps-vps-admin-bot.service
+2026-04-08 21:16:12 [ERROR] bot error [/ssl (user=8072748496)]: [Errno 2] No such file or directory: 'certbot'
