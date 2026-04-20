@@ -611,7 +611,7 @@ class FormField:
                  required: bool = False, hint: str = ""):
         self.key      = key
         self.label    = label
-        self.value    = default
+        self.value    = default if default is not None else ""
         self.required = required
         self.hint     = hint
 
